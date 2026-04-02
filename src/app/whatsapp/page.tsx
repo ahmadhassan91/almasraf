@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { Fragment, useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import KioskLayout from "@/components/KioskLayout";
 import ParticleCanvas from "@/components/ParticleCanvas";
@@ -33,7 +33,7 @@ export default function WhatsAppPage() {
   const [phase, setPhase] = useState<"intro" | "chat">("intro");
   const [phoneInput, setPhoneInput] = useState("+971 ");
   const [isSending, setIsSending] = useState(false);
-  const [messageSent, setMessageSent] = useState(false);
+  const [messageSent, setMessageSent] = useState<boolean | null>(null);
   const [messages, setMessages] = useState<WaMessage[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
@@ -162,10 +162,27 @@ export default function WhatsAppPage() {
     }
   };
 
-  const formatText = (text: string) => {
-    return text
-      .replace(/\*(.+?)\*/g, "<strong>$1</strong>")
-      .replace(/\n/g, "<br/>");
+  const renderFormattedText = (text: string) => {
+    const lines = text.split("\n");
+
+    return lines.map((line, lineIndex) => {
+      const segments = line.split(/(\*[^*]+\*)/g);
+
+      return (
+        <Fragment key={`line-${lineIndex}`}>
+          {segments.map((segment, segmentIndex) => {
+            const isBold = segment.startsWith("*") && segment.endsWith("*") && segment.length > 2;
+
+            if (isBold) {
+              return <strong key={`segment-${lineIndex}-${segmentIndex}`}>{segment.slice(1, -1)}</strong>;
+            }
+
+            return <Fragment key={`segment-${lineIndex}-${segmentIndex}`}>{segment}</Fragment>;
+          })}
+          {lineIndex < lines.length - 1 ? <br /> : null}
+        </Fragment>
+      );
+    });
   };
 
   return (
@@ -380,7 +397,7 @@ export default function WhatsAppPage() {
                     <div style={{
                       width: 44, height: 44, borderRadius: "50%", background: "linear-gradient(135deg, #C8A84B, #F5E27A)",
                       display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, fontWeight: 900, color: "#000"
-                    }}>AM</div>
+                    }}>{BOT_AVATAR_INITIALS}</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 16, fontWeight: 700, color: "#e9edef" }}>AL Masraf AI Banking</div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -406,9 +423,9 @@ export default function WhatsAppPage() {
 
                         {msg.role === "bot" && msg.text && (
                           <div style={{ display: "flex", alignItems: "flex-end", gap: 6, maxWidth: "85%" }}>
-                            <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg, #C8A84B, #F5E27A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, color: "#000", flexShrink: 0 }}>AM</div>
+                            <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg, #C8A84B, #F5E27A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, color: "#000", flexShrink: 0 }}>{BOT_AVATAR_INITIALS}</div>
                             <div style={{ background: "#202c33", color: "#e9edef", padding: "8px 12px", borderRadius: "12px 12px 12px 2px", fontSize: 14.5, lineHeight: 1.4, wordWrap: "break-word" }}>
-                              <span dangerouslySetInnerHTML={{ __html: formatText(msg.text) }} />
+                              <span>{renderFormattedText(msg.text)}</span>
                               <div style={{ fontSize: 11, color: "#8696a0", textAlign: "right", marginTop: 4, float: "right", marginLeft: 16 }}>{msg.time}</div>
                               <div style={{ clear: "both" }} />
                             </div>
@@ -428,7 +445,7 @@ export default function WhatsAppPage() {
                     ))}
                     {isTyping && (
                       <div style={{ display: "flex", alignItems: "flex-end", gap: 6, maxWidth: "85%" }}>
-                        <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg, #C8A84B, #F5E27A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, color: "#000", flexShrink: 0 }}>AM</div>
+                        <div style={{ width: 28, height: 28, borderRadius: "50%", background: "linear-gradient(135deg, #C8A84B, #F5E27A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 900, color: "#000", flexShrink: 0 }}>{BOT_AVATAR_INITIALS}</div>
                         <div style={{ background: "#202c33", padding: "14px 16px", borderRadius: "12px 12px 12px 2px", display: "flex", gap: 4 }}>
                           {[0, 1, 2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "#8696a0", animation: `blink 1.4s ${i * 0.2}s infinite` }} />)}
                         </div>
@@ -508,7 +525,7 @@ function PhoneMockupPreview() {
             background: "linear-gradient(135deg, #C8A84B, #F5E27A)",
             display: "flex", alignItems: "center", justifyContent: "center",
             fontSize: "14px", fontWeight: "900", color: "#000"
-          }}>AM</div>
+          }}>{BOT_AVATAR_INITIALS}</div>
           <div>
             <p style={{ fontSize: "14px", fontWeight: "700", color: "#e9edef" }}>AL Masraf AI</p>
             <p style={{ fontSize: "11px", color: "#00a884" }}>Online</p>

@@ -25,10 +25,8 @@ const TICKER_ITEMS = [
 export default function WelcomePage() {
   const router = useRouter();
   const [activeFeature, setActiveFeature] = useState(0);
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
     const iv = setInterval(() => setActiveFeature(p => (p + 1) % FEATURES.length), 3500);
     return () => clearInterval(iv);
   }, []);
@@ -62,8 +60,6 @@ export default function WelcomePage() {
             display: "flex", flexDirection: "column", justifyContent: "center",
             padding: "32px 48px",
             borderRight: "1px solid rgba(255,255,255,0.06)",
-            opacity: mounted ? 1 : 0,
-            transform: mounted ? "translateY(0)" : "translateY(20px)",
             transition: "all 0.5s ease",
           }}>
             {/* Status chips */}
@@ -192,7 +188,6 @@ export default function WelcomePage() {
           <div style={{
             display: "flex", flexDirection: "column", justifyContent: "center",
             padding: "24px 36px", gap: 12,
-            opacity: mounted ? 1 : 0,
             transition: "all 0.5s 0.1s ease",
           }}>
 

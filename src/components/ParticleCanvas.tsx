@@ -17,10 +17,13 @@ export default function ParticleCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const canvasEl = canvasRef.current;
+    if (canvasEl === null) return;
+    const canvas: HTMLCanvasElement = canvasEl;
+
+    const ctx = canvasEl.getContext("2d");
+    if (ctx === null) return;
+    const context: CanvasRenderingContext2D = ctx;
 
     const resize = () => {
       canvas.width = window.innerWidth;
@@ -66,23 +69,23 @@ export default function ParticleCanvas() {
     let animId: number;
 
     function draw() {
-      ctx!.clearRect(0, 0, canvas.width, canvas.height);
+      context.clearRect(0, 0, canvas.width, canvas.height);
 
       // Draw subtle grid lines
-      ctx!.strokeStyle = "rgba(255,255,255,0.015)";
-      ctx!.lineWidth = 1;
+      context.strokeStyle = "rgba(255,255,255,0.015)";
+      context.lineWidth = 1;
       const gridSize = 80;
       for (let x = 0; x < canvas.width; x += gridSize) {
-        ctx!.beginPath();
-        ctx!.moveTo(x, 0);
-        ctx!.lineTo(x, canvas.height);
-        ctx!.stroke();
+        context.beginPath();
+        context.moveTo(x, 0);
+        context.lineTo(x, canvas.height);
+        context.stroke();
       }
       for (let y = 0; y < canvas.height; y += gridSize) {
-        ctx!.beginPath();
-        ctx!.moveTo(0, y);
-        ctx!.lineTo(canvas.width, y);
-        ctx!.stroke();
+        context.beginPath();
+        context.moveTo(0, y);
+        context.lineTo(canvas.width, y);
+        context.stroke();
       }
 
       particles.forEach((p, i) => {
@@ -97,19 +100,19 @@ export default function ParticleCanvas() {
         else p.opacity = 1;
 
         // Draw particle
-        ctx!.beginPath();
-        const gradient = ctx!.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 3);
+        context.beginPath();
+        const gradient = context.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.radius * 3);
         gradient.addColorStop(0, `${p.color}${p.opacity * 0.8})`);
         gradient.addColorStop(1, `${p.color}0)`);
-        ctx!.fillStyle = gradient;
-        ctx!.arc(p.x, p.y, p.radius * 3, 0, Math.PI * 2);
-        ctx!.fill();
+        context.fillStyle = gradient;
+        context.arc(p.x, p.y, p.radius * 3, 0, Math.PI * 2);
+        context.fill();
 
         // Core dot
-        ctx!.beginPath();
-        ctx!.fillStyle = `${p.color}${p.opacity})`;
-        ctx!.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-        ctx!.fill();
+        context.beginPath();
+        context.fillStyle = `${p.color}${p.opacity})`;
+        context.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        context.fill();
 
         // Reset particle when done
         if (p.life >= p.maxLife || p.y < -20) {
@@ -124,12 +127,12 @@ export default function ParticleCanvas() {
           const dy = particles[i].y - particles[j].y;
           const dist = Math.sqrt(dx * dx + dy * dy);
           if (dist < 100) {
-            ctx!.beginPath();
-            ctx!.strokeStyle = `rgba(200,168,75,${(1 - dist / 100) * 0.06})`;
-            ctx!.lineWidth = 0.5;
-            ctx!.moveTo(particles[i].x, particles[i].y);
-            ctx!.lineTo(particles[j].x, particles[j].y);
-            ctx!.stroke();
+            context.beginPath();
+            context.strokeStyle = `rgba(200,168,75,${(1 - dist / 100) * 0.06})`;
+            context.lineWidth = 0.5;
+            context.moveTo(particles[i].x, particles[i].y);
+            context.lineTo(particles[j].x, particles[j].y);
+            context.stroke();
           }
         }
       }

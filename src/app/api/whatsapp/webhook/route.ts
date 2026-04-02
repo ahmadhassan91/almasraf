@@ -1,36 +1,87 @@
+import crypto from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import openai from "@/lib/openai";
 import { sendTextMessage } from "@/lib/whatsapp";
-import { MOCK_ACCOUNT } from "@/lib/mock-data";
+import {
+  CustomerAccount,
+  getSessionAccount,
+  getSessionPhone,
+} from "@/lib/mock-data";
 
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "almasraf_kiosk_webhook_2024";
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN;
+const APP_SECRET = process.env.WHATSAPP_APP_SECRET;
 
-const WA_SYSTEM_PROMPT = `You are an AI banking assistant for AL Masraf bank, responding via WhatsApp.
-The customer's account details:
-- Name: ${MOCK_ACCOUNT.customer.name}
-- Account: ${MOCK_ACCOUNT.accountNumber}
-- Balance: AED ${MOCK_ACCOUNT.balance.toLocaleString()}
-- Account Type: ${MOCK_ACCOUNT.accountType}
-- Status: ${MOCK_ACCOUNT.status}
+function normalizePhoneNumber(value: string) {
+  return value.replace(/\D/g, "");
+}
 
-Recent transactions:
-${MOCK_ACCOUNT.transactions
-  .slice(0, 3)
-  .map(
-    (t) =>
-      `• ${t.date}: ${t.description} (${t.type === "credit" ? "+" : "-"}AED ${Math.abs(t.amount).toLocaleString()})`
-  )
-  .join("\n")}
+function getLinkedAccount(from: string): CustomerAccount | null {
+  const sessionPhone = getSessionPhone();
+  if (!sessionPhone) return null;
+
+  return normalizePhoneNumber(sessionPhone) === normalizePhoneNumber(from)
+    ? getSessionAccount()
+    : null;
+}
+
+function buildSystemPrompt(account: CustomerAccount | null) {
+  const basePrompt = `You are an AI banking assistant for AL Masraf bank, responding via WhatsApp.
 
 Guidelines:
 - Be concise (max 3 sentences for WhatsApp)
 - Professional and friendly
 - Support Arabic phrases naturally
+- Never claim to know account balances, transactions, or personal details unless they are provided in the system context
+- If the user's account is not linked, explain that account-specific actions require linking through the kiosk or a secure channel
 - For complex requests, suggest visiting the kiosk or branch
 - Always end with a helpful offer`;
 
+  if (!account) {
+    return `${basePrompt}
+
+This WhatsApp user is not linked to a banking profile in the current session.
+Do not invent balances, account numbers, transactions, or service confirmations.`;
+  }
+
+  const recentTransactions = account.transactions
+    .slice(0, 3)
+    .map(
+      (transaction) =>
+        `• ${transaction.date}: ${transaction.description} (${transaction.type === "credit" ? "+" : "-"}AED ${Math.abs(transaction.amount).toLocaleString()})`
+    )
+    .join("\n");
+
+  return `${basePrompt}
+
+The customer's linked account details:
+- Name: ${account.customer.name}
+- Account: ${account.accountNumber}
+- Balance: AED ${account.balance.toLocaleString()}
+- Account Type: ${account.accountType}
+- Status: ${account.status}
+
+Recent transactions:
+${recentTransactions}`;
+}
+
+function hasValidSignature(rawBody: string, signature: string | null) {
+  if (!APP_SECRET) return true;
+  if (!signature) return false;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", APP_SECRET)
+    .update(rawBody)
+    .digest("hex");
+
+  return signature === `sha256=${expectedSignature}`;
+}
+
 // GET — Webhook verification
 export async function GET(req: NextRequest) {
+  if (!VERIFY_TOKEN) {
+    return NextResponse.json({ error: "Webhook verify token is not configured" }, { status: 500 });
+  }
+
   const { searchParams } = new URL(req.url);
   const mode = searchParams.get("hub.mode");
   const token = searchParams.get("hub.verify_token");
@@ -46,7 +97,13 @@ export async function GET(req: NextRequest) {
 // POST — Receive incoming messages
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const rawBody = await req.text();
+    const signature = req.headers.get("x-hub-signature-256");
+    if (!hasValidSignature(rawBody, signature)) {
+      return NextResponse.json({ error: "Invalid webhook signature" }, { status: 401 });
+    }
+
+    const body = JSON.parse(rawBody);
 
     const entry = body?.entry?.[0];
     const changes = entry?.changes?.[0];
@@ -68,11 +125,13 @@ export async function POST(req: NextRequest) {
 
     console.log(`WhatsApp message from ${from}: ${text}`);
 
+    const linkedAccount = getLinkedAccount(from);
+
     // Generate AI response
     const aiResponse = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        { role: "system", content: WA_SYSTEM_PROMPT },
+        { role: "system", content: buildSystemPrompt(linkedAccount) },
         { role: "user", content: text },
       ],
       max_tokens: 200,

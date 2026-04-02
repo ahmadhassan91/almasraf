@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { ChatCircle, X, PaperPlaneRight, Microphone, Sparkle, CaretRight } from "@phosphor-icons/react";
+import { X, PaperPlaneRight, Microphone, Sparkle, CaretRight } from "@phosphor-icons/react";
 
 interface Message {
   role: "user" | "assistant";
