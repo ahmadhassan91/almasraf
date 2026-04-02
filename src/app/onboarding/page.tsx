@@ -267,6 +267,14 @@ export default function OnboardingPage() {
     await runBiometricVerification(DEMO_SELFIE_PLACEHOLDER);
   }, [runBiometricVerification]);
 
+  const openBiometricStep = useCallback(() => {
+    clearBiometricState();
+    setStep("biometric");
+    window.setTimeout(() => {
+      void startCamera();
+    }, 0);
+  }, [clearBiometricState, startCamera]);
+
   const resetBiometricFlow = useCallback(() => {
     clearBiometricState();
     void startCamera();
@@ -715,7 +723,7 @@ export default function OnboardingPage() {
                     <ArrowLeft size={20} weight="bold" /> Re-scan ID
                   </button>
                   <button
-                    onClick={() => setStep("biometric")}
+                    onClick={openBiometricStep}
                     style={{
                       flex: 3, padding: "20px", borderRadius: 16, cursor: "pointer", border: "none",
                       background: "linear-gradient(135deg, #8A6E1E, #C8A84B, #F5E27A)", color: "#000", fontSize: 18, fontWeight: 900,
@@ -752,7 +760,7 @@ export default function OnboardingPage() {
                     background: "rgba(15,28,58,0.9)",
                     border: "1px solid rgba(255,255,255,0.08)",
                   }}>
-                    {!capturedFace && (
+                    {!capturedFace && cameraState === "ready" && (
                       <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, pointerEvents: "none" }}>
                         <div style={{
                           width: 220,
