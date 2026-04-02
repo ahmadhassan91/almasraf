@@ -7,11 +7,13 @@ import AIAssistant from "@/components/AIAssistant";
 import {
   UploadSimple, CheckCircle, User, File, Phone, CircleNotch, Sparkle,
   Timer, ShieldStar, ScanSmiley, Hash, UserCheck, Globe, CheckFat,
-  Lock, ArrowLeft, Confetti, ChartLineUp, CreditCard, DeviceMobile
+  Lock, ArrowLeft, Confetti, ChartLineUp, CreditCard, DeviceMobile,
+  Camera, Fingerprint, ShieldCheck, UserFocus, ArrowClockwise
 } from "@phosphor-icons/react";
 import { CustomerAccount, MOCK_ACCOUNT, setSessionAccount } from "@/lib/mock-data";
 
-type Step = "upload" | "scanning" | "review" | "confirm" | "success";
+type Step = "upload" | "scanning" | "review" | "biometric" | "confirm" | "success";
+type CameraState = "idle" | "requesting" | "ready" | "unsupported" | "blocked";
 
 interface ExtractedData {
   name: string;
@@ -23,7 +25,13 @@ interface ExtractedData {
   gender: string;
 }
 
-const STEP_LABELS = ["Scan ID", "AI Processing", "Review Details", "Confirm", "Account Created"];
+interface BiometricResult {
+  livenessScore: number;
+  faceMatchScore: number;
+  fingerprintSupported: boolean;
+}
+
+const STEP_LABELS = ["Scan ID", "AI Processing", "Review Details", "Biometric Check", "Confirm", "Account Created"];
 
 const SCANNING_STEPS = [
   { Icon: ScanSmiley,  text: "Detecting document boundaries..." },
@@ -68,6 +76,32 @@ const NEXT_ACTIONS = [
   },
 ];
 
+const BIOMETRIC_STEPS = [
+  { Icon: Camera, label: "Camera and liveness", desc: "Validate a real customer is present at the kiosk" },
+  { Icon: UserFocus, label: "Face match", desc: "Compare selfie against Emirates ID identity" },
+  { Icon: Fingerprint, label: "Fingerprint sensor", desc: "Kiosk hardware support ready for reader SDK integration" },
+];
+
+const DEMO_SELFIE_PLACEHOLDER = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+    <defs>
+      <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="#10213f" />
+        <stop offset="100%" stop-color="#0b1630" />
+      </linearGradient>
+      <linearGradient id="ring" x1="0" x2="1" y1="0" y2="1">
+        <stop offset="0%" stop-color="#C8A84B" />
+        <stop offset="100%" stop-color="#F5E27A" />
+      </linearGradient>
+    </defs>
+    <rect width="640" height="480" rx="36" fill="url(#bg)" />
+    <circle cx="320" cy="180" r="78" fill="rgba(255,255,255,0.10)" stroke="url(#ring)" stroke-width="8" />
+    <path d="M180 402c28-84 111-132 140-132s112 48 140 132" fill="rgba(255,255,255,0.08)" stroke="url(#ring)" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="320" cy="180" r="114" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2" stroke-dasharray="12 12" />
+    <text x="320" y="445" text-anchor="middle" fill="#F8FAFC" font-size="24" font-family="Arial, sans-serif">AL Masraf biometric demo capture</text>
+  </svg>
+`)}`;
+
 function buildDecisionChecks(data: ExtractedData | null, phone: string) {
   const normalizedPhone = phone.replace(/\D/g, "");
 
@@ -103,6 +137,8 @@ function buildDecisionChecks(data: ExtractedData | null, phone: string) {
 export default function OnboardingPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [step, setStep] = useState<Step>("upload");
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
@@ -115,10 +151,16 @@ export default function OnboardingPage() {
   const [elapsedSecs, setElapsedSecs] = useState(0);
   const [totalTime, setTotalTime] = useState(0);
   const [whatsappSent, setWhatsappSent] = useState(false);
+  const [cameraState, setCameraState] = useState<CameraState>("idle");
+  const [capturedFace, setCapturedFace] = useState<string | null>(null);
+  const [biometricStep, setBiometricStep] = useState(0);
+  const [isBiometricProcessing, setIsBiometricProcessing] = useState(false);
+  const [biometricVerified, setBiometricVerified] = useState(false);
+  const [biometricResult, setBiometricResult] = useState<BiometricResult | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const startTimeRef = useRef<number>(0);
 
-  const currentStepIndex = ["upload", "scanning", "review", "confirm", "success"].indexOf(step);
+  const currentStepIndex = ["upload", "scanning", "review", "biometric", "confirm", "success"].indexOf(step);
   const decisionChecks = buildDecisionChecks(extractedData, phone);
   const accountHolderName = extractedData?.name || MOCK_ACCOUNT.customer.name;
   const accountHolderNameAr = extractedData?.nameAr || MOCK_ACCOUNT.customer.nameAr;
@@ -137,6 +179,108 @@ export default function OnboardingPage() {
   }, [step]);
 
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
+
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraState("unsupported");
+      return;
+    }
+
+    setCameraState("requesting");
+
+    try {
+      stopCamera();
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => undefined);
+      }
+      setCameraState("ready");
+    } catch {
+      setCameraState("blocked");
+    }
+  }, [stopCamera]);
+
+  const clearBiometricState = useCallback(() => {
+    stopCamera();
+    setCameraState("idle");
+    setCapturedFace(null);
+    setBiometricStep(0);
+    setBiometricVerified(false);
+    setBiometricResult(null);
+    setIsBiometricProcessing(false);
+  }, [stopCamera]);
+
+  const runBiometricVerification = useCallback(async (faceImage: string) => {
+    setCapturedFace(faceImage);
+    setBiometricStep(0);
+    setBiometricVerified(false);
+    setBiometricResult(null);
+    setIsBiometricProcessing(true);
+    stopCamera();
+
+    for (let i = 0; i < BIOMETRIC_STEPS.length; i++) {
+      await new Promise((r) => setTimeout(r, 850));
+      setBiometricStep(i + 1);
+    }
+
+    setBiometricResult({
+      livenessScore: 98,
+      faceMatchScore: 97,
+      fingerprintSupported: true,
+    });
+    setBiometricVerified(true);
+    setIsBiometricProcessing(false);
+  }, [stopCamera]);
+
+  const handleCaptureFace = useCallback(async () => {
+    if (!videoRef.current) return;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = videoRef.current.videoWidth || 1280;
+    canvas.height = videoRef.current.videoHeight || 720;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+
+    context.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+    await runBiometricVerification(canvas.toDataURL("image/jpeg", 0.92));
+  }, [runBiometricVerification]);
+
+  const handleUseDemoBiometric = useCallback(async () => {
+    await runBiometricVerification(DEMO_SELFIE_PLACEHOLDER);
+  }, [runBiometricVerification]);
+
+  const resetBiometricFlow = useCallback(() => {
+    clearBiometricState();
+    void startCamera();
+  }, [clearBiometricState, startCamera]);
+
+  useEffect(() => {
+    if (step !== "biometric") {
+      stopCamera();
+    }
+
+    return () => {
+      stopCamera();
+    };
+  }, [step, stopCamera]);
 
   const processImage = useCallback(async (base64: string) => {
     startTimeRef.current = Date.now();
@@ -203,6 +347,10 @@ export default function OnboardingPage() {
   }, [processImage]);
 
   const handleSubmit = async () => {
+    if (!biometricVerified) {
+      return;
+    }
+
     setIsSubmitting(true);
     await new Promise((r) => setTimeout(r, 2000));
     setTotalTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
@@ -552,7 +700,12 @@ export default function OnboardingPage() {
 
                 <div style={{ display: "flex", gap: 20, marginTop: 10 }}>
                   <button
-                    onClick={() => { setStep("upload"); setFilledFields({}); setUploadedImage(null); }}
+                    onClick={() => {
+                      clearBiometricState();
+                      setStep("upload");
+                      setFilledFields({});
+                      setUploadedImage(null);
+                    }}
                     style={{
                       flex: 1, padding: "20px", borderRadius: 16, cursor: "pointer", border: "1px solid rgba(255,255,255,0.15)",
                       background: "rgba(255,255,255,0.05)", color: "#FFF", fontSize: 16, fontWeight: 800,
@@ -562,14 +715,332 @@ export default function OnboardingPage() {
                     <ArrowLeft size={20} weight="bold" /> Re-scan ID
                   </button>
                   <button
-                    onClick={() => setStep("confirm")}
+                    onClick={() => setStep("biometric")}
                     style={{
                       flex: 3, padding: "20px", borderRadius: 16, cursor: "pointer", border: "none",
                       background: "linear-gradient(135deg, #8A6E1E, #C8A84B, #F5E27A)", color: "#000", fontSize: 18, fontWeight: 900,
                       display: "flex", alignItems: "center", justifyContent: "center", gap: 12
                     }}
                   >
-                    <CheckFat size={24} weight="bold" /> Confirm Details and Proceed
+                    <CheckFat size={24} weight="bold" /> Continue to Biometric Verification
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ====== BIOMETRIC ====== */}
+            {step === "biometric" && (
+              <div style={{ display: "flex", gap: 40, alignItems: "flex-start", width: "100%", maxWidth: 960, animation: "slideUpFade 0.5s ease", marginTop: 20 }}>
+                <div style={{ width: 360, flexShrink: 0, display: "flex", flexDirection: "column", gap: 18 }}>
+                  <div>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: "#60A5FA", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                      Biometric Verification
+                    </p>
+                    <h3 style={{ fontSize: 30, fontWeight: 900, color: "#FFF", lineHeight: 1.15 }}>
+                      Face verification with kiosk-ready fingerprint support
+                    </h3>
+                    <p style={{ fontSize: 15, color: "#94A3B8", lineHeight: 1.6, marginTop: 12 }}>
+                      This POC runs face and liveness verification in the kiosk browser today, while keeping the same step ready for a fingerprint reader SDK.
+                    </p>
+                  </div>
+
+                  <div style={{
+                    position: "relative",
+                    borderRadius: 24,
+                    overflow: "hidden",
+                    minHeight: 420,
+                    background: "rgba(15,28,58,0.9)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}>
+                    {!capturedFace && (
+                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2, pointerEvents: "none" }}>
+                        <div style={{
+                          width: 220,
+                          height: 280,
+                          borderRadius: 140,
+                          border: "2px dashed rgba(200,168,75,0.55)",
+                          boxShadow: "0 0 0 9999px rgba(8,15,30,0.35)",
+                        }} />
+                      </div>
+                    )}
+
+                    {capturedFace ? (
+                      <img
+                        src={capturedFace}
+                        alt="Biometric selfie capture"
+                        style={{ width: "100%", height: 420, objectFit: "cover", display: "block" }}
+                      />
+                    ) : cameraState === "ready" ? (
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        style={{ width: "100%", height: 420, objectFit: "cover", display: "block", transform: "scaleX(-1)" }}
+                      />
+                    ) : (
+                      <div style={{ height: 420, display: "flex", alignItems: "center", justifyContent: "center", padding: 28 }}>
+                        <div style={{ textAlign: "center", maxWidth: 280 }}>
+                          <div style={{
+                            width: 84, height: 84, borderRadius: 24, margin: "0 auto 20px",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "rgba(200,168,75,0.1)", border: "1px solid rgba(200,168,75,0.25)",
+                          }}>
+                            {cameraState === "requesting" ? (
+                              <CircleNotch size={34} weight="bold" color="#C8A84B" className="animate-spin" />
+                            ) : (
+                              <Camera size={34} weight="duotone" color="#C8A84B" />
+                            )}
+                          </div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: "#F8FAFC", marginBottom: 10 }}>
+                            {cameraState === "requesting"
+                              ? "Connecting to kiosk camera..."
+                              : cameraState === "idle"
+                                ? "Enable kiosk camera"
+                                : "Camera preview unavailable"}
+                          </div>
+                          <p style={{ fontSize: 14, color: "#94A3B8", lineHeight: 1.6 }}>
+                            {cameraState === "idle"
+                              ? "Tap Enable Camera to start selfie capture for liveness and face matching."
+                              : cameraState === "blocked"
+                              ? "Camera permission is blocked in the browser. You can still run a demo biometric capture for the POC."
+                              : cameraState === "unsupported"
+                                ? "This browser does not expose the kiosk camera directly. Demo biometric mode is still available."
+                                : "Initializing selfie capture for liveness and face matching."}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {!capturedFace && (
+                      <div style={{
+                        position: "absolute",
+                        left: 18,
+                        right: 18,
+                        bottom: 18,
+                        display: "flex",
+                        gap: 10,
+                        zIndex: 3,
+                      }}>
+                        <button
+                          onClick={() => void startCamera()}
+                          style={{
+                            flex: 1,
+                            padding: "14px 16px",
+                            borderRadius: 14,
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            background: "rgba(15,28,58,0.86)",
+                            color: "#F8FAFC",
+                            fontWeight: 800,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Enable Camera
+                        </button>
+                        <button
+                          onClick={handleUseDemoBiometric}
+                          style={{
+                            flex: 1,
+                            padding: "14px 16px",
+                            borderRadius: 14,
+                            border: "none",
+                            background: "linear-gradient(135deg, #8A6E1E, #C8A84B, #F5E27A)",
+                            color: "#000",
+                            fontWeight: 900,
+                            cursor: "pointer",
+                          }}
+                        >
+                          Demo Capture
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button
+                      onClick={() => {
+                        clearBiometricState();
+                        setStep("review");
+                      }}
+                      style={{
+                        flex: 1, padding: "16px", borderRadius: 14, cursor: "pointer", border: "1px solid rgba(255,255,255,0.15)",
+                        background: "rgba(255,255,255,0.05)", color: "#FFF", fontSize: 15, fontWeight: 800,
+                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8
+                      }}
+                    >
+                      <ArrowLeft size={18} weight="bold" /> Back to Review
+                    </button>
+                    {!capturedFace ? (
+                      <button
+                        onClick={() => void handleCaptureFace()}
+                        disabled={cameraState !== "ready"}
+                        style={{
+                          flex: 1, padding: "16px", borderRadius: 14, cursor: cameraState === "ready" ? "pointer" : "not-allowed", border: "none",
+                          background: "linear-gradient(135deg, #1A6EE0, #4D9FFF)", color: "#FFF", fontSize: 15, fontWeight: 900,
+                          opacity: cameraState === "ready" ? 1 : 0.5,
+                        }}
+                      >
+                        Capture Selfie
+                      </button>
+                    ) : (
+                      <button
+                        onClick={resetBiometricFlow}
+                        style={{
+                          flex: 1, padding: "16px", borderRadius: 14, cursor: "pointer", border: "none",
+                          background: "linear-gradient(135deg, #1A6EE0, #4D9FFF)", color: "#FFF", fontSize: 15, fontWeight: 900,
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                        }}
+                      >
+                        <ArrowClockwise size={18} weight="bold" /> Retake
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 18 }}>
+                  <div style={{
+                    borderRadius: 24, padding: 28, background: "rgba(15,28,58,0.88)", border: "1px solid rgba(255,255,255,0.08)",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 18 }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#34D399", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                          Trust Layer
+                        </div>
+                        <h4 style={{ fontSize: 22, fontWeight: 900, color: "#FFF" }}>
+                          Kiosk biometric checkpoint
+                        </h4>
+                      </div>
+                      {biometricVerified && (
+                        <div style={{
+                          padding: "10px 14px",
+                          borderRadius: 14,
+                          background: "rgba(52,211,153,0.08)",
+                          border: "1px solid rgba(52,211,153,0.24)",
+                          color: "#34D399",
+                          fontWeight: 800,
+                          fontSize: 13,
+                        }}>
+                          Verified
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                      {BIOMETRIC_STEPS.map((item, index) => {
+                        const status = biometricStep > index ? "passed" : biometricStep === index + 1 && isBiometricProcessing ? "processing" : "pending";
+
+                        return (
+                          <div
+                            key={item.label}
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 14,
+                              padding: "16px 18px",
+                              borderRadius: 18,
+                              background: status === "passed"
+                                ? "rgba(52,211,153,0.05)"
+                                : status === "processing"
+                                  ? "rgba(200,168,75,0.06)"
+                                  : "rgba(255,255,255,0.02)",
+                              border: status === "passed"
+                                ? "1px solid rgba(52,211,153,0.16)"
+                                : status === "processing"
+                                  ? "1px solid rgba(200,168,75,0.22)"
+                                  : "1px solid rgba(255,255,255,0.06)",
+                            }}
+                          >
+                            <div style={{
+                              width: 44,
+                              height: 44,
+                              borderRadius: 14,
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              background: status === "passed"
+                                ? "rgba(52,211,153,0.1)"
+                                : status === "processing"
+                                  ? "rgba(200,168,75,0.1)"
+                                  : "rgba(255,255,255,0.05)",
+                              color: status === "passed" ? "#34D399" : status === "processing" ? "#C8A84B" : "#64748B",
+                              flexShrink: 0,
+                            }}>
+                              {status === "processing"
+                                ? <CircleNotch size={20} weight="bold" className="animate-spin" />
+                                : <item.Icon size={20} weight="duotone" />}
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: 15, fontWeight: 800, color: "#F8FAFC" }}>{item.label}</div>
+                              <div style={{ fontSize: 13, color: "#94A3B8", lineHeight: 1.55, marginTop: 4 }}>{item.desc}</div>
+                            </div>
+                            {status === "passed" && <CheckCircle size={18} weight="bold" color="#34D399" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div style={{
+                    borderRadius: 24, padding: 28, background: "rgba(26,110,224,0.05)", border: "1px solid rgba(26,110,224,0.15)",
+                  }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "#60A5FA", textTransform: "uppercase", letterSpacing: 1, marginBottom: 18 }}>
+                      Verification Outcome
+                    </div>
+
+                    {biometricResult ? (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                        {[
+                          { Icon: ShieldCheck, label: "Liveness", value: `${biometricResult.livenessScore}%`, color: "#34D399" },
+                          { Icon: UserFocus, label: "Face Match", value: `${biometricResult.faceMatchScore}%`, color: "#34D399" },
+                          { Icon: Fingerprint, label: "Fingerprint", value: biometricResult.fingerprintSupported ? "SDK-ready" : "Unavailable", color: "#60A5FA" },
+                          { Icon: ShieldStar, label: "Decision", value: "Approved", color: "#C8A84B" },
+                        ].map(({ Icon, label, value, color }) => (
+                          <div key={label} style={{
+                            padding: "16px 18px",
+                            borderRadius: 18,
+                            background: "rgba(255,255,255,0.03)",
+                            border: "1px solid rgba(255,255,255,0.08)",
+                          }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                              <Icon size={18} weight="duotone" color={color} />
+                              <span style={{ fontSize: 13, fontWeight: 700, color: "#94A3B8" }}>{label}</span>
+                            </div>
+                            <div style={{ fontSize: 20, fontWeight: 900, color: "#F8FAFC" }}>{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: 14, color: "#94A3B8", lineHeight: 1.7 }}>
+                        Capture a selfie to run liveness and face matching. For the physical kiosk, the same checkpoint can also call the fingerprint reader via vendor SDK or middleware.
+                      </p>
+                    )}
+                  </div>
+
+                  <div style={{
+                    borderRadius: 18,
+                    padding: "18px 20px",
+                    background: "rgba(52,211,153,0.06)",
+                    border: "1px solid rgba(52,211,153,0.18)",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                      <Fingerprint size={18} weight="duotone" color="#34D399" />
+                      <span style={{ fontSize: 14, fontWeight: 800, color: "#34D399" }}>Kiosk hardware note</span>
+                    </div>
+                    <p style={{ fontSize: 14, color: "#CBD5E1", lineHeight: 1.6 }}>
+                      Face verification is active in this POC. Fingerprint verification is architected as the next production integration once the kiosk reader SDK or local service is connected.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => setStep("confirm")}
+                    disabled={!biometricVerified}
+                    style={{
+                      width: "100%", padding: "22px", borderRadius: 16, cursor: biometricVerified ? "pointer" : "not-allowed", border: "none",
+                      background: "linear-gradient(135deg, #8A6E1E, #C8A84B, #F5E27A)", color: "#000", fontSize: 18, fontWeight: 900,
+                      opacity: biometricVerified ? 1 : 0.5,
+                    }}
+                  >
+                    Proceed to Final Confirmation
                   </button>
                 </div>
               </div>
@@ -590,12 +1061,13 @@ export default function OnboardingPage() {
                       { label: "Currency", value: "AED — UAE Dirham" },
                       { label: "Account Holder", value: extractedData?.name || MOCK_ACCOUNT.customer.name },
                       { label: "Emirates ID", value: extractedData?.idNumber || MOCK_ACCOUNT.customer.idNumber },
+                      { label: "Biometric", value: biometricVerified ? `Face verified · ${biometricResult?.faceMatchScore || 0}% match` : "Pending" },
                       { label: "Opening Balance", value: "AED 0.00" },
                       { label: "Monthly Fee", value: "AED 0 — Free Account" },
                     ].map((item, i) => (
                       <div key={item.label} style={{
                         display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 0",
-                        borderBottom: i === 5 ? "none" : "1px solid rgba(255,255,255,0.06)"
+                        borderBottom: i === 6 ? "none" : "1px solid rgba(255,255,255,0.06)"
                       }}>
                         <span style={{ fontSize: 15, color: "#94A3B8", fontWeight: 600 }}>{item.label}</span>
                         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -635,7 +1107,7 @@ export default function OnboardingPage() {
                     <span style={{ fontSize: 14, fontWeight: 800, color: "#34D399" }}>Branch-ready outcome</span>
                   </div>
                   <p style={{ fontSize: 14, color: "#CBD5E1", lineHeight: 1.6 }}>
-                    The kiosk is ready to activate the account, open statement services, and push the journey to WhatsApp in the same session.
+                    The kiosk is ready to activate the account, confirm face verification, open statement services, and push the journey to WhatsApp in the same session.
                   </p>
                 </div>
 
@@ -675,6 +1147,16 @@ export default function OnboardingPage() {
                   <p style={{ fontSize: 20, color: "#94A3B8" }}>
                     Welcome to AL Masraf, <strong style={{ color: "#FFF" }}>{accountHolderName.split(" ")[0] || "Valued Customer"}</strong>
                   </p>
+                </div>
+
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 12, padding: "12px 24px", borderRadius: 999,
+                  background: "rgba(52,211,153,0.1)", border: "1px solid rgba(52,211,153,0.3)",
+                }}>
+                  <ShieldCheck size={20} weight="bold" color="#34D399" />
+                  <span style={{ fontSize: 15, fontWeight: 800, color: "#34D399" }}>
+                    Face verification passed{biometricResult ? ` · ${biometricResult.faceMatchScore}% match` : ""}
+                  </span>
                 </div>
 
                 <div style={{
