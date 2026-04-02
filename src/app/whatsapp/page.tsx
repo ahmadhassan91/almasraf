@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import KioskLayout from "@/components/KioskLayout";
 import ParticleCanvas from "@/components/ParticleCanvas";
 import AIAssistant from "@/components/AIAssistant";
-import { MOCK_ACCOUNT } from "@/lib/mock-data";
+import { MOCK_ACCOUNT, getSessionAccount, getSessionPhone, setSessionAccount } from "@/lib/mock-data";
 import {
   PaperPlaneRight, Microphone, CheckCircle, CircleNotch, Phone, Sparkle, ArrowLeft,
   Info, Robot, ShieldStar, Globe, Lightning
@@ -16,6 +16,12 @@ interface WaMessage {
   text: string;
   time: string;
   status?: "sent" | "delivered" | "read";
+}
+
+interface HandoffStatus {
+  state: "accepted" | "failed";
+  title: string;
+  detail: string;
 }
 
 const SUGGESTED_QUESTIONS = [
@@ -30,15 +36,18 @@ const BOT_AVATAR_INITIALS = "AM";
 
 export default function WhatsAppPage() {
   const router = useRouter();
+  const linkedAccount = getSessionAccount() ?? MOCK_ACCOUNT;
+  const linkedPhone = getSessionPhone();
   const [phase, setPhase] = useState<"intro" | "chat">("intro");
-  const [phoneInput, setPhoneInput] = useState("+971 ");
+  const [phoneInput, setPhoneInput] = useState(linkedPhone || "+971 ");
   const [isSending, setIsSending] = useState(false);
-  const [messageSent, setMessageSent] = useState<boolean | null>(null);
+  const [handoffStatus, setHandoffStatus] = useState<HandoffStatus | null>(null);
   const [messages, setMessages] = useState<WaMessage[]>([]);
   const [input, setInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [mounted, setMounted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const autoStartedRef = useRef(false);
 
   useEffect(() => {
     setMounted(true);
@@ -58,12 +67,12 @@ export default function WhatsAppPage() {
       {
         id: "bot1",
         role: "bot",
-        text: `🏦 *Welcome to AL Masraf!*\n\nAssalamu Alaikum *${MOCK_ACCOUNT.customer.name}*,\n\nYour account has been linked to this WhatsApp number.\n\n📋 *Account:* ${MOCK_ACCOUNT.accountNumber}\n💰 *Balance:* AED ${MOCK_ACCOUNT.balance.toLocaleString("en-AE", { minimumFractionDigits: 2 })}\n✅ *Status:* Active\n\nHow can I help you today? You can ask me anything about your account! 🤖`,
+        text: `🏦 *Welcome to AL Masraf!*\n\nAssalamu Alaikum *${linkedAccount.customer.name}*,\n\nYour account has been linked to this WhatsApp journey.\n\n📋 *Account:* ${linkedAccount.accountNumber}\n💰 *Balance:* AED ${linkedAccount.balance.toLocaleString("en-AE", { minimumFractionDigits: 2 })}\n✅ *Status:* ${linkedAccount.status}\n\nHow can I help you today? You can ask me anything about your account! 🤖`,
         time: getTime(),
         status: "read",
       },
     ]);
-  }, []);
+  }, [linkedAccount]);
 
   useEffect(() => {
     if (phase === "chat") {
@@ -73,28 +82,48 @@ export default function WhatsAppPage() {
 
   const sendWelcomeWhatsApp = async () => {
     setIsSending(true);
+    const normalizedPhone = phoneInput.replace(/[\s\-\(\)]/g, "");
+    setSessionAccount(linkedAccount, normalizedPhone || linkedPhone || linkedAccount.customer.phone);
+
     try {
       const res = await fetch("/api/whatsapp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: phoneInput.replace(/[\s\-\(\)]/g, ""),
+          to: normalizedPhone,
           type: "account_welcome",
-          customerName: MOCK_ACCOUNT.customer.name,
-          accountNumber: MOCK_ACCOUNT.accountNumber,
+          customerName: linkedAccount.customer.name,
+          accountNumber: linkedAccount.accountNumber,
+          sessionAccount: linkedAccount,
         }),
       });
       const data = await res.json();
-      setMessageSent(data.success !== false);
+      if (res.ok && data.success === true) {
+        setHandoffStatus({
+          state: "accepted",
+          title: "WhatsApp Handoff Accepted",
+          detail: `WhatsApp accepted the mobile handoff for ${phoneInput}.`,
+        });
+      } else {
+        setHandoffStatus({
+          state: "failed",
+          title: "WhatsApp Send Failed",
+          detail: data.error || "The kiosk opened chat mode, but the live handoff could not be sent.",
+        });
+      }
     } catch {
-      setMessageSent(false);
+      setHandoffStatus({
+        state: "failed",
+        title: "WhatsApp Send Failed",
+        detail: "The live message could not be sent. You can still demo the banking chat inside the kiosk.",
+      });
     }
     setIsSending(false);
     setPhase("chat");
     initChat();
   };
 
-  const sendUserMessage = async (text: string) => {
+  const sendUserMessage = useCallback(async (text: string) => {
     if (!text.trim() || isTyping) return;
     setInput("");
 
@@ -160,7 +189,32 @@ export default function WhatsAppPage() {
     } finally {
       setIsTyping(false);
     }
-  };
+  }, [isTyping, messages]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shouldAutostart = params.get("autostart") === "1";
+    const prompt = params.get("prompt");
+
+    if (!shouldAutostart || autoStartedRef.current) return;
+
+    autoStartedRef.current = true;
+    setPhase("chat");
+    setHandoffStatus({
+      state: "accepted",
+      title: "Kiosk Continuation Ready",
+      detail: linkedPhone
+        ? `This banking journey is ready to continue for ${linkedPhone}.`
+        : "The AI concierge opened WhatsApp continuation for this banking journey.",
+    });
+    initChat();
+
+    if (prompt) {
+      window.setTimeout(() => {
+        void sendUserMessage(prompt);
+      }, 300);
+    }
+  }, [initChat, linkedPhone, sendUserMessage]);
 
   const renderFormattedText = (text: string) => {
     const lines = text.split("\n");
@@ -318,19 +372,21 @@ export default function WhatsAppPage() {
                   <ArrowLeft size={16} /> Back
                 </button>
 
-                {messageSent !== null && (
+                {handoffStatus && (
                   <div style={{
                     padding: "16px", borderRadius: 16, display: "flex", alignItems: "flex-start", gap: 12,
-                    background: messageSent ? "rgba(52,211,153,0.1)" : "rgba(248,113,113,0.1)",
-                    border: messageSent ? "1px solid rgba(52,211,153,0.3)" : "1px solid rgba(248,113,113,0.3)",
+                    background: handoffStatus.state === "accepted" ? "rgba(52,211,153,0.1)" : "rgba(248,113,113,0.1)",
+                    border: handoffStatus.state === "accepted" ? "1px solid rgba(52,211,153,0.3)" : "1px solid rgba(248,113,113,0.3)",
                   }}>
-                    {messageSent ? <CheckCircle size={20} style={{ color: "#34D399", marginTop: 2, flexShrink: 0 }} /> : <Info size={20} style={{ color: "#F87171", marginTop: 2, flexShrink: 0 }} />}
+                    {handoffStatus.state === "accepted"
+                      ? <CheckCircle size={20} style={{ color: "#34D399", marginTop: 2, flexShrink: 0 }} />
+                      : <Info size={20} style={{ color: "#F87171", marginTop: 2, flexShrink: 0 }} />}
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: messageSent ? "#34D399" : "#F87171" }}>
-                        {messageSent ? "Message Delivered!" : "Demo Mode"}
+                      <div style={{ fontSize: 13, fontWeight: 800, color: handoffStatus.state === "accepted" ? "#34D399" : "#F87171" }}>
+                        {handoffStatus.title}
                       </div>
                       <div style={{ fontSize: 12, color: "#94A3B8", marginTop: 4 }}>
-                        {messageSent ? `WhatsApp message sent to ${phoneInput}` : "Using simulated chat — add webhook for real replies"}
+                        {handoffStatus.detail}
                       </div>
                     </div>
                   </div>
@@ -341,8 +397,29 @@ export default function WhatsAppPage() {
                   background: "rgba(15,28,58,0.9)", border: "1px solid rgba(200,168,75,0.25)"
                 }}>
                   <div style={{ fontSize: 11, color: "#94A3B8", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 8 }}>Linked Account</div>
-                  <div style={{ fontSize: 14, color: "#F1F5F9", fontFamily: "monospace", marginBottom: 6 }}>{MOCK_ACCOUNT.accountNumber}</div>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: "#C8A84B" }}>AED {MOCK_ACCOUNT.balance.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</div>
+                  <div style={{ fontSize: 14, color: "#F1F5F9", fontFamily: "monospace", marginBottom: 6 }}>{linkedAccount.accountNumber}</div>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: "#C8A84B" }}>AED {linkedAccount.balance.toLocaleString("en-AE", { minimumFractionDigits: 2 })}</div>
+                </div>
+
+                <div style={{
+                  padding: "18px", borderRadius: 16,
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)"
+                }}>
+                  <div style={{ fontSize: 11, color: "#60A5FA", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 10, fontWeight: 800 }}>
+                    AI Branch Handoff
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {[
+                      `Identity verified for ${linkedAccount.customer.name}`,
+                      "Mobile banking continuation is ready",
+                      "Service requests can continue in Arabic or English",
+                    ].map((item) => (
+                      <div key={item} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                        <CheckCircle size={16} weight="bold" color="#34D399" style={{ flexShrink: 0, marginTop: 1 }} />
+                        <span style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.5 }}>{item}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <div>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { CustomerAccount, setSessionAccount } from "@/lib/mock-data";
 import { sendAccountWelcome, sendTextMessage } from "@/lib/whatsapp";
 
 const PHONE_NUMBER_REGEX = /^\d{10,15}$/;
@@ -13,7 +14,21 @@ function normalizePhoneNumber(value: string) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { to, type, customerName, accountNumber, message } = await req.json();
+    const {
+      to,
+      type,
+      customerName,
+      accountNumber,
+      message,
+      sessionAccount,
+    }: {
+      to: string;
+      type: string;
+      customerName?: string;
+      accountNumber?: string;
+      message?: string;
+      sessionAccount?: CustomerAccount;
+    } = await req.json();
 
     if (!to) {
       return NextResponse.json({ error: "Phone number required" }, { status: 400 });
@@ -29,6 +44,10 @@ export async function POST(req: NextRequest) {
         { error: "Recipient is not allowlisted for this environment" },
         { status: 403 }
       );
+    }
+
+    if (sessionAccount) {
+      setSessionAccount(sessionAccount, normalizedTo);
     }
 
     let result;

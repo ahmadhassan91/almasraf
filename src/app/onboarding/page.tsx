@@ -7,9 +7,9 @@ import AIAssistant from "@/components/AIAssistant";
 import {
   UploadSimple, CheckCircle, User, File, Phone, CircleNotch, Sparkle,
   Timer, ShieldStar, ScanSmiley, Hash, UserCheck, Globe, CheckFat,
-  Lock, ArrowLeft, Confetti
+  Lock, ArrowLeft, Confetti, ChartLineUp, CreditCard, DeviceMobile
 } from "@phosphor-icons/react";
-import { MOCK_ACCOUNT } from "@/lib/mock-data";
+import { CustomerAccount, MOCK_ACCOUNT, setSessionAccount } from "@/lib/mock-data";
 
 type Step = "upload" | "scanning" | "review" | "confirm" | "success";
 
@@ -44,6 +44,62 @@ const FORM_FIELDS = [
   { key: "gender",      label: "Gender",                    Icon: User },
 ];
 
+const NEXT_ACTIONS = [
+  {
+    key: "whatsapp",
+    title: "Continue on WhatsApp",
+    desc: "Send a live banking handoff to the customer phone",
+    action: "continue_whatsapp",
+    Icon: DeviceMobile,
+  },
+  {
+    key: "statement",
+    title: "Show Mini Statement",
+    desc: "Open statement services instantly from the new account",
+    action: "show_statement",
+    Icon: ChartLineUp,
+  },
+  {
+    key: "card",
+    title: "Offer Platinum Card",
+    desc: "Present the next-best card recommendation in one tap",
+    action: "offer_card",
+    Icon: CreditCard,
+  },
+];
+
+function buildDecisionChecks(data: ExtractedData | null, phone: string) {
+  const normalizedPhone = phone.replace(/\D/g, "");
+
+  return [
+    {
+      label: "Identity extraction",
+      detail: data?.idNumber ? `Emirates ID ${data.idNumber} captured successfully` : "Waiting for document data",
+      status: "passed" as const,
+    },
+    {
+      label: "Document validity",
+      detail: data?.expiry ? `Document valid until ${data.expiry}` : "Expiry date pending",
+      status: "passed" as const,
+    },
+    {
+      label: "Customer profile quality",
+      detail: data?.nameAr ? "Arabic and English identity fields are complete" : "Arabic name still needs confirmation",
+      status: data?.nameAr ? ("passed" as const) : ("attention" as const),
+    },
+    {
+      label: "AML and compliance",
+      detail: "Low-risk onboarding path approved for instant account creation",
+      status: "passed" as const,
+    },
+    {
+      label: "WhatsApp continuity",
+      detail: normalizedPhone.length >= 10 ? `Mobile handoff ready for ${phone}` : "Add a mobile number to enable mobile continuation",
+      status: normalizedPhone.length >= 10 ? ("passed" as const) : ("attention" as const),
+    },
+  ];
+}
+
 export default function OnboardingPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +119,10 @@ export default function OnboardingPage() {
   const startTimeRef = useRef<number>(0);
 
   const currentStepIndex = ["upload", "scanning", "review", "confirm", "success"].indexOf(step);
+  const decisionChecks = buildDecisionChecks(extractedData, phone);
+  const accountHolderName = extractedData?.name || MOCK_ACCOUNT.customer.name;
+  const accountHolderNameAr = extractedData?.nameAr || MOCK_ACCOUNT.customer.nameAr;
+  const cleanedPhone = phone.replace(/[\s\-\(\)]/g, "");
 
   useEffect(() => {
     if (step !== "upload" && step !== "success") {
@@ -146,16 +206,34 @@ export default function OnboardingPage() {
     setIsSubmitting(true);
     await new Promise((r) => setTimeout(r, 2000));
     setTotalTime(Math.floor((Date.now() - startTimeRef.current) / 1000));
+
+    const sessionAccount: CustomerAccount = {
+      ...MOCK_ACCOUNT,
+      customer: {
+        ...MOCK_ACCOUNT.customer,
+        name: accountHolderName,
+        nameAr: accountHolderNameAr,
+        idNumber: extractedData?.idNumber || MOCK_ACCOUNT.customer.idNumber,
+        nationality: extractedData?.nationality || MOCK_ACCOUNT.customer.nationality,
+        dob: extractedData?.dob || MOCK_ACCOUNT.customer.dob,
+        gender: extractedData?.gender || MOCK_ACCOUNT.customer.gender,
+        phone: cleanedPhone || MOCK_ACCOUNT.customer.phone,
+      },
+    };
+
+    setSessionAccount(sessionAccount, cleanedPhone || MOCK_ACCOUNT.customer.phone);
     setStep("success");
+
     try {
       const res = await fetch("/api/whatsapp/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          to: phone.replace(/[\s\-\(\)]/g, ""),
+          to: cleanedPhone,
           type: "account_welcome",
-          customerName: extractedData?.name || MOCK_ACCOUNT.customer.name,
+          customerName: accountHolderName,
           accountNumber: MOCK_ACCOUNT.accountNumber,
+          sessionAccount,
         }),
       });
       if (res.ok) setWhatsappSent(true);
@@ -258,7 +336,7 @@ export default function OnboardingPage() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                     <Lock size={15} weight="bold" style={{ color: "#34D399" }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "#34D399" }}>
-                      256-bit encrypted · Data never leaves this device
+                      256-bit encrypted · Secure AI verification session
                     </span>
                   </div>
                 </div>
@@ -423,6 +501,55 @@ export default function OnboardingPage() {
                   </div>
                 </div>
 
+                <div style={{
+                  borderRadius: 24, padding: 32, background: "rgba(15,28,58,0.88)", border: "1px solid rgba(96,165,250,0.18)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, marginBottom: 22 }}>
+                    <div>
+                      <p style={{ fontSize: 13, fontWeight: 700, color: "#60A5FA", textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+                        AI Decision Console
+                      </p>
+                      <h4 style={{ fontSize: 22, fontWeight: 900, color: "#FFF", lineHeight: 1.2 }}>
+                        Recommended outcome: Open current account and activate mobile continuation
+                      </h4>
+                    </div>
+                    <div style={{
+                      padding: "12px 16px",
+                      borderRadius: 16,
+                      background: "rgba(52,211,153,0.08)",
+                      border: "1px solid rgba(52,211,153,0.2)",
+                      minWidth: 140,
+                    }}>
+                      <div style={{ fontSize: 11, color: "#64748B", textTransform: "uppercase", letterSpacing: "0.12em" }}>
+                        AI Confidence
+                      </div>
+                      <div style={{ fontSize: 28, fontWeight: 900, color: "#34D399", marginTop: 6 }}>
+                        96%
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                    {decisionChecks.map((check) => (
+                      <div
+                        key={check.label}
+                        style={{
+                          borderRadius: 18,
+                          padding: "18px 20px",
+                          background: check.status === "passed" ? "rgba(52,211,153,0.05)" : "rgba(251,191,36,0.06)",
+                          border: check.status === "passed" ? "1px solid rgba(52,211,153,0.16)" : "1px solid rgba(251,191,36,0.18)",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                          <CheckCircle size={18} weight="bold" color={check.status === "passed" ? "#34D399" : "#FBBF24"} />
+                          <span style={{ fontSize: 14, fontWeight: 800, color: "#F8FAFC" }}>{check.label}</span>
+                        </div>
+                        <p style={{ fontSize: 13, color: "#94A3B8", lineHeight: 1.6 }}>{check.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 <div style={{ display: "flex", gap: 20, marginTop: 10 }}>
                   <button
                     onClick={() => { setStep("upload"); setFilledFields({}); setUploadedImage(null); }}
@@ -497,6 +624,21 @@ export default function OnboardingPage() {
                   </p>
                 </div>
 
+                <div style={{
+                  borderRadius: 18,
+                  padding: "18px 20px",
+                  background: "rgba(52,211,153,0.06)",
+                  border: "1px solid rgba(52,211,153,0.18)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                    <Sparkle size={18} weight="fill" color="#34D399" />
+                    <span style={{ fontSize: 14, fontWeight: 800, color: "#34D399" }}>Branch-ready outcome</span>
+                  </div>
+                  <p style={{ fontSize: 14, color: "#CBD5E1", lineHeight: 1.6 }}>
+                    The kiosk is ready to activate the account, open statement services, and push the journey to WhatsApp in the same session.
+                  </p>
+                </div>
+
                 <button
                   onClick={handleSubmit}
                   disabled={isSubmitting}
@@ -531,7 +673,7 @@ export default function OnboardingPage() {
                 <div>
                   <h2 style={{ fontSize: 48, fontWeight: 900, color: "#FFF", marginBottom: 10 }}>Account Created!</h2>
                   <p style={{ fontSize: 20, color: "#94A3B8" }}>
-                    Welcome to AL Masraf, <strong style={{ color: "#FFF" }}>{extractedData?.name?.split(" ")[0] || "Valued Customer"}</strong>
+                    Welcome to AL Masraf, <strong style={{ color: "#FFF" }}>{accountHolderName.split(" ")[0] || "Valued Customer"}</strong>
                   </p>
                 </div>
 
@@ -572,14 +714,73 @@ export default function OnboardingPage() {
                   {whatsappSent && <CheckCircle size={20} weight="bold" color="#34D399" />}
                 </div>
 
+                <div style={{
+                  width: "100%",
+                  maxWidth: 760,
+                  borderRadius: 24,
+                  padding: 28,
+                  background: "rgba(15,28,58,0.88)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+                    <Sparkle size={18} weight="fill" color="#60A5FA" />
+                    <span style={{ fontSize: 13, fontWeight: 800, color: "#60A5FA", letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                      AI Next Best Actions
+                    </span>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+                    {NEXT_ACTIONS.map(({ key, title, desc, action, Icon }) => (
+                      <button
+                        key={key}
+                        onClick={() => {
+                          if (action === "continue_whatsapp") {
+                            router.push("/whatsapp?autostart=1&prompt=Give me my new account summary");
+                            return;
+                          }
+                          if (action === "show_statement") {
+                            router.push("/services?intent=statement");
+                            return;
+                          }
+                          router.push("/services?intent=credit_card");
+                        }}
+                        style={{
+                          textAlign: "left",
+                          borderRadius: 18,
+                          padding: "18px 18px 20px",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          background: "rgba(255,255,255,0.03)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <div style={{
+                          width: 42,
+                          height: 42,
+                          borderRadius: 14,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          marginBottom: 14,
+                          background: "rgba(200,168,75,0.1)",
+                          color: "#C8A84B",
+                        }}>
+                          <Icon size={22} weight="duotone" />
+                        </div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: "#F8FAFC" }}>{title}</div>
+                        <div style={{ fontSize: 12, color: "#94A3B8", lineHeight: 1.6, marginTop: 6 }}>{desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div style={{ display: "flex", gap: 20, width: "100%", maxWidth: 560, marginTop: 10 }}>
-                  <button onClick={() => router.push("/services")} style={{
+                  <button onClick={() => router.push("/services?intent=statement")} style={{
                     flex: 1, padding: "20px", borderRadius: 16, cursor: "pointer", border: "none",
                     background: "rgba(255,255,255,0.08)", color: "#FFF", fontSize: 16, fontWeight: 800, transition: "all 0.2s"
                   }}>
                     Explore Services
                   </button>
-                  <button onClick={() => router.push("/whatsapp")} style={{
+                  <button onClick={() => router.push("/whatsapp?autostart=1&prompt=Give me my new account summary")} style={{
                     flex: 1, padding: "20px", borderRadius: 16, cursor: "pointer", border: "none",
                     background: "linear-gradient(135deg, #1A3EBF, #2563EB)", color: "#FFF", fontSize: 16, fontWeight: 800,
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 10

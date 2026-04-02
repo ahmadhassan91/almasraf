@@ -22,14 +22,70 @@ const TICKER_ITEMS = [
   "24/7 Support: 800 MASRAF", "Arabic & English", "Account in Under 2 Minutes",
 ];
 
+const CONCIERGE_SUGGESTIONS = [
+  "Open an account for me",
+  "Show my balance",
+  "Print my statement",
+  "Request a checkbook",
+  "Continue on WhatsApp",
+];
+
+function resolveJourney(prompt: string) {
+  const normalized = prompt.toLowerCase();
+
+  if (/(open|onboard|kyc|account|emirates id)/.test(normalized)) {
+    return { label: "AI concierge is starting account opening", path: "/onboarding" };
+  }
+
+  if (/(balance|funds|money)/.test(normalized)) {
+    return { label: "AI concierge is opening your balance view", path: "/services?intent=balance" };
+  }
+
+  if (/(statement|transaction|history|print)/.test(normalized)) {
+    return { label: "AI concierge is preparing your statement journey", path: "/services?intent=statement" };
+  }
+
+  if (/(checkbook|cheque)/.test(normalized)) {
+    return { label: "AI concierge is preparing your checkbook request", path: "/services?intent=checkbook" };
+  }
+
+  if (/(debit)/.test(normalized)) {
+    return { label: "AI concierge is preparing your debit card request", path: "/services?intent=debit_card" };
+  }
+
+  if (/(credit card|credit)/.test(normalized)) {
+    return { label: "AI concierge is preparing your credit card request", path: "/services?intent=credit_card" };
+  }
+
+  return {
+    label: "AI concierge is continuing this conversation on WhatsApp",
+    path: `/whatsapp?autostart=1&prompt=${encodeURIComponent(prompt)}`,
+  };
+}
+
 export default function WelcomePage() {
   const router = useRouter();
   const [activeFeature, setActiveFeature] = useState(0);
+  const [conciergeInput, setConciergeInput] = useState("");
+  const [journeyLabel, setJourneyLabel] = useState<string | null>(null);
 
   useEffect(() => {
     const iv = setInterval(() => setActiveFeature(p => (p + 1) % FEATURES.length), 3500);
     return () => clearInterval(iv);
   }, []);
+
+  const startJourney = (prompt: string) => {
+    const text = prompt.trim();
+    if (!text) return;
+
+    const journey = resolveJourney(text);
+    setJourneyLabel(journey.label);
+    setConciergeInput("");
+
+    window.setTimeout(() => {
+      router.push(journey.path);
+    }, 350);
+  };
 
   return (
     <KioskLayout showBack={false}>
@@ -118,7 +174,113 @@ export default function WelcomePage() {
                   }}>{s.value}</div>
                   <div style={{ fontSize: 11, color: "#64748B", marginTop: 2, fontWeight: 500 }}>{s.label}</div>
                 </div>
-              ))}
+                ))}
+            </div>
+
+            <div style={{
+              borderRadius: 22,
+              padding: 22,
+              marginBottom: 24,
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.08)",
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#60A5FA", letterSpacing: "0.16em", textTransform: "uppercase" }}>
+                    AI Concierge
+                  </div>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: "#F8FAFC", marginTop: 6 }}>
+                    Tell the kiosk what you need
+                  </div>
+                </div>
+                <div style={{
+                  padding: "6px 12px",
+                  borderRadius: 999,
+                  background: "rgba(96,165,250,0.08)",
+                  border: "1px solid rgba(96,165,250,0.2)",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "#60A5FA",
+                  whiteSpace: "nowrap",
+                }}>
+                  Intent-driven banking
+                </div>
+              </div>
+
+              <p style={{ color: "#94A3B8", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
+                Try natural requests like “print my statement”, “open an account”, or “continue on WhatsApp”.
+              </p>
+
+              <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                <input
+                  value={conciergeInput}
+                  onChange={(e) => setConciergeInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && startJourney(conciergeInput)}
+                  placeholder="I need a statement and want it on WhatsApp"
+                  style={{
+                    flex: 1,
+                    padding: "16px 18px",
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "rgba(0,0,0,0.22)",
+                    color: "#F8FAFC",
+                    fontSize: 14,
+                    outline: "none",
+                  }}
+                />
+                <button
+                  onClick={() => startJourney(conciergeInput)}
+                  style={{
+                    padding: "0 20px",
+                    borderRadius: 14,
+                    border: "none",
+                    cursor: "pointer",
+                    background: "linear-gradient(135deg, #1A6EE0, #4D9FFF)",
+                    color: "#fff",
+                    fontWeight: 800,
+                    fontSize: 14,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Start Journey
+                </button>
+              </div>
+
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {CONCIERGE_SUGGESTIONS.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    onClick={() => startJourney(suggestion)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 999,
+                      border: "1px solid rgba(255,255,255,0.08)",
+                      background: "rgba(255,255,255,0.04)",
+                      color: "#CBD5E1",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+
+              {journeyLabel && (
+                <div style={{
+                  marginTop: 14,
+                  padding: "10px 14px",
+                  borderRadius: 12,
+                  background: "rgba(52,211,153,0.08)",
+                  border: "1px solid rgba(52,211,153,0.2)",
+                  color: "#34D399",
+                  fontSize: 12,
+                  fontWeight: 700,
+                }}>
+                  {journeyLabel}
+                </div>
+              )}
             </div>
 
             {/* ── CTAs ── */}
