@@ -188,6 +188,16 @@ export default function OnboardingPage() {
     }
   }, []);
 
+  const attachStreamToVideo = useCallback(async () => {
+    if (!videoRef.current || !streamRef.current) return;
+
+    if (videoRef.current.srcObject !== streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+    }
+
+    await videoRef.current.play().catch(() => undefined);
+  }, []);
+
   const startCamera = useCallback(async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraState("unsupported");
@@ -208,15 +218,12 @@ export default function OnboardingPage() {
       });
 
       streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => undefined);
-      }
+      await attachStreamToVideo();
       setCameraState("ready");
     } catch {
       setCameraState("blocked");
     }
-  }, [stopCamera]);
+  }, [attachStreamToVideo, stopCamera]);
 
   const clearBiometricState = useCallback(() => {
     stopCamera();
@@ -289,6 +296,12 @@ export default function OnboardingPage() {
       stopCamera();
     };
   }, [step, stopCamera]);
+
+  useEffect(() => {
+    if (step === "biometric" && cameraState === "ready") {
+      void attachStreamToVideo();
+    }
+  }, [attachStreamToVideo, cameraState, step]);
 
   const processImage = useCallback(async (base64: string) => {
     startTimeRef.current = Date.now();
